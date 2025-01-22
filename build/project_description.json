@@ -1,7 +1,7 @@
 {
     "version":            "1.1",
     "project_name":       "final_project",
-    "project_version":    "a662c59-dirty",
+    "project_version":    "90f0f81-dirty",
     "project_path":       "C:/Users/krzys/OneDrive/Pulpit/GITHUB/IoT",
     "idf_path":           "C:/Users/krzys/esp/v5.3.1/esp-idf",
     "build_dir":          "C:/Users/krzys/OneDrive/Pulpit/GITHUB/IoT/build",

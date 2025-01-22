@@ -262,6 +262,7 @@ esp_err_t wifi_manager_init(bool reset_config)
     {
         ESP_ERROR_CHECK(esp_netif_init());
         ESP_ERROR_CHECK(esp_event_loop_create_default());
+    
     }
     
     // Upewnij się, że NVS jest gotowe
