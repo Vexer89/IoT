@@ -1,0 +1,48 @@
+# Ignorowanie katalogów kompilacji
+/build/
+sdkconfig
+sdkconfig.old
+
+# Pliki binarne i obrazy firmware
+*.bin
+*.elf
+*.map
+*.hex
+*.img
+
+# Pliki logów
+*.log
+*.log.*
+
+# Pliki zależności kompilacji
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+*.d
+*.o
+*.a
+
+# Konfiguracje lokalne
+*.pyc
+*.pyo
+*.swp
+*.swo
+*.swn
+.vscode/
+*.DS_Store
+
+# Pliki tymczasowe edytorów i systemów operacyjnych
+*.bak
+*.tmp
+*.~*
+*.swp
+
+# Pliki z ESP-IDF build
+/flash/
+*.espressif
+/.output/
+
+
+.devcontainer

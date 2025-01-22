@@ -5,18 +5,18 @@ cmake_minimum_required(VERSION 3.5)
 
 file(MAKE_DIRECTORY
   "C:/Users/krzys/esp/v5.3.1/esp-idf/components/bootloader/subproject"
-  "C:/Users/krzys/OneDrive/Pulpit/IoT/final_project/build/bootloader"
-  "C:/Users/krzys/OneDrive/Pulpit/IoT/final_project/build/bootloader-prefix"
-  "C:/Users/krzys/OneDrive/Pulpit/IoT/final_project/build/bootloader-prefix/tmp"
-  "C:/Users/krzys/OneDrive/Pulpit/IoT/final_project/build/bootloader-prefix/src/bootloader-stamp"
-  "C:/Users/krzys/OneDrive/Pulpit/IoT/final_project/build/bootloader-prefix/src"
-  "C:/Users/krzys/OneDrive/Pulpit/IoT/final_project/build/bootloader-prefix/src/bootloader-stamp"
+  "C:/Users/krzys/OneDrive/Pulpit/GITHUB/IoT/build/bootloader"
+  "C:/Users/krzys/OneDrive/Pulpit/GITHUB/IoT/build/bootloader-prefix"
+  "C:/Users/krzys/OneDrive/Pulpit/GITHUB/IoT/build/bootloader-prefix/tmp"
+  "C:/Users/krzys/OneDrive/Pulpit/GITHUB/IoT/build/bootloader-prefix/src/bootloader-stamp"
+  "C:/Users/krzys/OneDrive/Pulpit/GITHUB/IoT/build/bootloader-prefix/src"
+  "C:/Users/krzys/OneDrive/Pulpit/GITHUB/IoT/build/bootloader-prefix/src/bootloader-stamp"
 )
 
 set(configSubDirs )
 foreach(subDir IN LISTS configSubDirs)
-    file(MAKE_DIRECTORY "C:/Users/krzys/OneDrive/Pulpit/IoT/final_project/build/bootloader-prefix/src/bootloader-stamp/${subDir}")
+    file(MAKE_DIRECTORY "C:/Users/krzys/OneDrive/Pulpit/GITHUB/IoT/build/bootloader-prefix/src/bootloader-stamp/${subDir}")
 endforeach()
 if(cfgdir)
-  file(MAKE_DIRECTORY "C:/Users/krzys/OneDrive/Pulpit/IoT/final_project/build/bootloader-prefix/src/bootloader-stamp${cfgdir}") # cfgdir has leading slash
+  file(MAKE_DIRECTORY "C:/Users/krzys/OneDrive/Pulpit/GITHUB/IoT/build/bootloader-prefix/src/bootloader-stamp${cfgdir}") # cfgdir has leading slash
 endif()

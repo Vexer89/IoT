@@ -1,4 +1,4 @@
-# Install script for directory: C:/Users/krzys/OneDrive/Pulpit/IoT/final_project/main
+# Install script for directory: C:/Users/krzys/OneDrive/Pulpit/GITHUB/IoT/main
 
 # Set the install prefix
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)
