@@ -3,15 +3,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_netif.h"
-
-// Declaration of the wifi_manager_get_config function
-// esp_err_t wifi_manager_get_config(nvs_wifi_config_t *config) {
-//     // Dummy implementation for example purposes
-//     strcpy(config->wifi_ssid, "example_ssid");
-//     strcpy(config->wifi_pass, "example_pass");
-//     strcpy(config->mqtt_host, "example_mqtt_host");
-//     return ESP_OK;
-// }
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "driver/gpio.h"
@@ -52,7 +43,7 @@ static TaskHandle_t wifi_task_handle = NULL;
 
 // Progi alarmowe
 #define TEMP_THRESHOLD 30.0
-#define MQ2_THRESHOLD 2000
+#define MQ2_THRESHOLD 1500
 
 //#define MQTT_BROKER_URI "mqtt://192.168.144.219:1883"
 #define MQTT_BROKER_URI "mqtt://192.168.55.90:1883"
@@ -87,6 +78,8 @@ int noteDurations[] = {
     300, 300, 300, 300, 300, 300, 600, 600
 };
 
+TaskHandle_t LedBuzzerTaskHandle = NULL;
+TaskHandle_t BlinkLedTaskHandle = NULL;
 
 // Funkcja odtwarzania dźwięku
 void play_tone(uint32_t frequency, uint32_t duration_ms) {
@@ -139,10 +132,10 @@ void led_buzzer_task(void *arg) {
     ESP_LOGI(TAG, "Rozpoczynam miganie LED i odtwarzanie melodii...");
 
     while (!stop_signal) {
-        gpio_set_level(LED_PIN, 1);  // Włącz LED
+        //gpio_set_level(LED_PIN, 1);  // Włącz LED
         play_melody();  // Odtwarzanie melodii
 
-        gpio_set_level(LED_PIN, 0);  // Wyłącz LED
+        //gpio_set_level(LED_PIN, 0);  // Wyłącz LED
         vTaskDelay(pdMS_TO_TICKS(1000));  // Przerwa przed kolejnym cyklem
     }
 
@@ -182,8 +175,9 @@ void check_sensors_task(void *arg) {
             if (!stop_signal) {
                 ESP_LOGW(TAG, "PRZEKROCZONO PROGI! AKTYWACJA ALARMU!");
                 stop_signal = false;
-                //xTaskCreate(led_buzzer_task, "led_buzzer_task", 4096, NULL, 5, NULL);
-                //mqtt_manager_send("sensor/alarm", "Przekroczono progi bezpieczeństwa!");
+                xTaskCreate(led_buzzer_task, "led_buzzer_task", 4096, NULL, 5, &LedBuzzerTaskHandle);
+                xTaskCreate(blink_led_task, "blink_led_task", 4096, NULL, 5, &BlinkLedTaskHandle);
+                mqtt_manager_send("sensor/alarm", "Przekroczono progi bezpieczeństwa!");
             }
         }
 
@@ -191,8 +185,20 @@ void check_sensors_task(void *arg) {
     }
 }
 
-
-
+//================BLE-task=========================
+// void send_alarm_task(void *pvParameters) {
+//     while (1) {
+//         ESP_LOGI(TAG, "Wysyłanie alarmu...");
+//         esp_err_t ret = ble_gatt_server_send_alarm("ALARM: Pożar wykryty!");
+//         if (ret == ESP_OK) {
+//             ESP_LOGI(TAG, "Alarm został wysłany");
+//         } else {
+//             ESP_LOGE(TAG, "Nie udało się wysłać alarmu");
+//         }
+//         vTaskDelay(pdMS_TO_TICKS(10000));  // Co 10 sekund
+//     }
+// }
+//=========================================================
 
 
 void configure_buzzer() {
@@ -315,7 +321,18 @@ void button_task(void *arg) {
                 ESP_LOGI(TAG, "Przycisk naciśnięty, wyłączam LED i buzzer na stałe.");
                 gpio_set_level(LED_PIN, 0);  // Wyłącz LED
                 stop_signal = true;  // Ustawienie flagi zatrzymania
-                vTaskDelete(NULL);  // Zakończenie taska
+
+                if (LedBuzzerTaskHandle != NULL) {
+                    vTaskDelete(LedBuzzerTaskHandle);
+                    LedBuzzerTaskHandle = NULL;
+                }
+                if (BlinkLedTaskHandle != NULL) {
+                    vTaskDelete(BlinkLedTaskHandle);
+                    BlinkLedTaskHandle = NULL;
+                }
+                vTaskDelay(pdMS_TO_TICKS(5000));
+                stop_signal = false;  // Resetowanie flagi zatrzymania
+                
             }
         }
         vTaskDelay(pdMS_TO_TICKS(100));  // Oczekiwanie 100 ms
@@ -384,6 +401,14 @@ void app_main(void)
     xTaskCreate(wifi_manager_task, "wifi_manager_task", 4096, (void *)&reset_wifi, 5, &wifi_task_handle);
     ESP_LOGI(TAG, "Inicjalizacja systemu...");
     
+
+    // esp_err_t ret = ble_gatt_server_init();
+    // if (ret != ESP_OK) {
+    //     ESP_LOGE(TAG, "Inicjalizacja BLE GATT Server nie powiodła się: %s", esp_err_to_name(ret));
+    //     return;
+    // }
+    //  xTaskCreate(&send_alarm_task, "send_alarm_task", 4096, NULL, 5, NULL);
+
     
     
     //====================================================BUZZER BUTTON==================================================================
@@ -406,10 +431,10 @@ void app_main(void)
     
 
     // ============================================Initialize MQTT Manager===============================================================
-    // if (init_mqtt_manager(MQTT_BROKER_URI, MQTT_USER, MQTT_PASSWORD) != ESP_OK) {
-    //     ESP_LOGE(TAG, "Failed to initialize MQTT Manager");
-    //     return;
-    // }
+    if (init_mqtt_manager(MQTT_BROKER_URI, MQTT_USER, MQTT_PASSWORD) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize MQTT Manager");
+        return;
+    }
     //===================================================================================================================================
 
 
@@ -419,7 +444,7 @@ void app_main(void)
     xTaskCreate(check_sensors_task, "check_sensors_task", 4096, NULL, 5, NULL);
     xTaskCreate(button_task, "button_task", 2048, NULL, 5, NULL);
 
-    xTaskCreate(led_buzzer_task, "led_buzzer_task", 4096, NULL, 5, NULL);
+    //xTaskCreate(led_buzzer_task, "led_buzzer_task", 4096, NULL, 5, NULL);
     // xTaskCreate(button_task, "button_task", 2048, NULL, 5, NULL);
     char test_topic[100];
     snprintf(test_topic, sizeof(test_topic), "test");
