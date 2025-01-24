@@ -10,6 +10,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
+#include "driver/i2c_master.h"
+
 
 //Our libraries
 #include "wifi/wifi_manager.h"
@@ -17,7 +19,7 @@
 #include "bmp280/bmp280.h"
 #include "mqtt/mqtt_manager.h"
 #include "mq2/mq2.h"
-#include "driver/i2c_master.h"
+#include "ble/ble_gatt_server.h"
 
 
 static bool stop_signal = false;  // Flaga do zatrzymania działania
@@ -177,7 +179,7 @@ void check_sensors_task(void *arg) {
                 stop_signal = false;
                 xTaskCreate(led_buzzer_task, "led_buzzer_task", 4096, NULL, 5, &LedBuzzerTaskHandle);
                 xTaskCreate(blink_led_task, "blink_led_task", 4096, NULL, 5, &BlinkLedTaskHandle);
-                mqtt_manager_send("sensor/alarm", "Przekroczono progi bezpieczeństwa!");
+                mqtt_manager_send("sensor/alarm", "Przekroczono progi bezpieczemstwa!");
             }
         }
 
@@ -186,18 +188,18 @@ void check_sensors_task(void *arg) {
 }
 
 //================BLE-task=========================
-// void send_alarm_task(void *pvParameters) {
-//     while (1) {
-//         ESP_LOGI(TAG, "Wysyłanie alarmu...");
-//         esp_err_t ret = ble_gatt_server_send_alarm("ALARM: Pożar wykryty!");
-//         if (ret == ESP_OK) {
-//             ESP_LOGI(TAG, "Alarm został wysłany");
-//         } else {
-//             ESP_LOGE(TAG, "Nie udało się wysłać alarmu");
-//         }
-//         vTaskDelay(pdMS_TO_TICKS(10000));  // Co 10 sekund
-//     }
-// }
+void send_alarm_task(void *pvParameters) {
+    while (1) {
+        ESP_LOGI(TAG, "Wysyłanie alarmu...");
+        esp_err_t ret = ble_gatt_server_send_alarm("ALARM: Pożar wykryty!");
+        if (ret == ESP_OK) {
+            ESP_LOGI(TAG, "Alarm został wysłany");
+        } else {
+            ESP_LOGE(TAG, "Nie udało się wysłać alarmu");
+        }
+        vTaskDelay(pdMS_TO_TICKS(10000));  // Co 10 sekund
+    }
+}
 //=========================================================
 
 
@@ -402,32 +404,13 @@ void app_main(void)
     ESP_LOGI(TAG, "Inicjalizacja systemu...");
     
 
-    // esp_err_t ret = ble_gatt_server_init();
-    // if (ret != ESP_OK) {
-    //     ESP_LOGE(TAG, "Inicjalizacja BLE GATT Server nie powiodła się: %s", esp_err_to_name(ret));
-    //     return;
-    // }
-    //  xTaskCreate(&send_alarm_task, "send_alarm_task", 4096, NULL, 5, NULL);
+    esp_err_t ret = ble_gatt_server_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Inicjalizacja BLE GATT Server nie powiodła się: %s", esp_err_to_name(ret));
+        return;
+    }
+     xTaskCreate(&send_alarm_task, "send_alarm_task", 4096, NULL, 5, NULL);
 
-    
-    
-    //====================================================BUZZER BUTTON==================================================================
-    // // Resetowanie i konfiguracja pinu buzzera jako wyjście
-    // gpio_reset_pin(BUZZER_PIN);
-    // gpio_set_direction(BUZZER_PIN, GPIO_MODE_OUTPUT);
-    
-    // // Resetowanie i konfiguracja pinu przycisku jako wejście z rezystorem pull-up
-    // gpio_reset_pin(BUTTON_PIN);
-    // gpio_set_direction(BUTTON_PIN, GPIO_MODE_INPUT);
-    // gpio_pullup_en(BUTTON_PIN);  // Aktywacja pull-up
-    // gpio_pulldown_dis(BUTTON_PIN);  // Dezaktywacja pull-down
-
-    // // Domyślnie buzzer włączony
-    // gpio_set_level(BUZZER_PIN, 1);
-    // ESP_LOGI(TAG, "Buzzer włączony domyślnie.");
-
-    // int button_state = 1;  // Stan przycisku (początkowo nienaciśnięty)
-    // int previous_button_state = 1;  // Poprzedni stan przycisku
     
 
     // ============================================Initialize MQTT Manager===============================================================
@@ -437,15 +420,14 @@ void app_main(void)
     }
     //===================================================================================================================================
 
+    //===============================================Czujniki i Alarm =====================================================
 
-    // Konfiguracja pinu jako wyjście
     configure_io_pins();
-    // Uruchomienie tasków
     xTaskCreate(check_sensors_task, "check_sensors_task", 4096, NULL, 5, NULL);
     xTaskCreate(button_task, "button_task", 2048, NULL, 5, NULL);
+    
+    //===================================================================================================================================
 
-    //xTaskCreate(led_buzzer_task, "led_buzzer_task", 4096, NULL, 5, NULL);
-    // xTaskCreate(button_task, "button_task", 2048, NULL, 5, NULL);
     char test_topic[100];
     snprintf(test_topic, sizeof(test_topic), "test");
     
@@ -454,17 +436,6 @@ void app_main(void)
     // mq2_init();
 
     while (1) {
-
-        // uint16_t gas_value = mq2_read();
-        
-        // if (mq2_detect_gas()) {
-        //     ESP_LOGW("APP", "Wykryto niebezpieczny poziom gazu!");
-        // } else {
-        //     ESP_LOGI("APP", "Poziom gazu w normie.");
-        // }
-
-        
-
 
         // check_reset_button();
         // Jeśli chcesz sprawdzić parametry co jakiś czas:
@@ -494,17 +465,9 @@ void app_main(void)
         //     ESP_LOGE(TAG, "Błąd odbioru wiadomości MQTT");
         // }
         // button_state = gpio_get_level(BUTTON_PIN);
-
-        // // Sprawdzenie stanu przycisku (0 oznacza naciśnięty przycisk)
-        // if (button_state == 0 && previous_button_state == 1) {
-        //     ESP_LOGI(TAG, "Przycisk naciśnięty, wyłączam buzzer.");
-        //     gpio_set_level(BUZZER_PIN, 0);  // Wyłącz buzzer
-        // }
-
-
+        
 
         // previous_button_state = button_state;  // Aktualizacja poprzedniego stanu
-        //mqtt_manager_send(test_topic, "TEST");
         vTaskDelay(pdMS_TO_TICKS(3000));  // Oczekiwanie 100 ms dla stabilności
     
     }
