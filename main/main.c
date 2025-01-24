@@ -25,12 +25,22 @@
 #include "nvs/nvs_manager.h"
 #include "bmp280/bmp280.h"
 #include "mqtt/mqtt_manager.h"
+#include "mq2/mq2.h"
+#include "driver/i2c_master.h"
 
 
 static bool stop_signal = false;  // Flaga do zatrzymania działania
 
 
 static const char *TAG = "MAIN";
+
+// Definicje dla magistrali I2C
+#define I2C_MASTER_SCL_IO 22               // Numer pinu GPIO dla linii SCL 
+#define I2C_MASTER_SDA_IO 21               // Numer pinu GPIO dla linii SDA 
+#define I2C_MASTER_NUM I2C_NUM_0           // Numer portu I2C (I2C0) 
+#define I2C_MASTER_FREQ_HZ 100000          // Częstotliwość pracy magistrali I2C (100 kHz) 
+#define I2C_MASTER_TX_BUF_DISABLE 0        // Wyłączenie bufora transmisji 
+#define I2C_MASTER_RX_BUF_DISABLE 0        // Wyłączenie bufora odbioru 
 
 static TaskHandle_t wifi_task_handle = NULL;
 
@@ -39,14 +49,20 @@ static TaskHandle_t wifi_task_handle = NULL;
 #define BUTTON_PIN  GPIO_NUM_18   // Dostosuj do rzeczywistego pinu
 #define BUZZER_PIN  GPIO_NUM_26  // Dostosuj do rzeczywistego pinu
 #define LED_PIN    GPIO_NUM_25  // Dostosuj do rzeczywistego pinu
-#define TEMP_THRESHOLD 30.0     // Próg temperatury w stopniach Celsjusza
 
-#define MQTT_BROKER_URI "mqtt://192.168.144.219:1883"
-#define MQTT_USER "admin"
-#define MQTT_PASSWORD "your_password" // Replace with actual password if any
+// Progi alarmowe
+#define TEMP_THRESHOLD 30.0
+#define MQ2_THRESHOLD 2000
+
+//#define MQTT_BROKER_URI "mqtt://192.168.144.219:1883"
+#define MQTT_BROKER_URI "mqtt://192.168.55.90:1883"
+#define MQTT_USER NULL
+#define MQTT_PASSWORD NULL // Replace with actual password if any
 #define DEVICE_ID "esp32"
+#define SERVICE_UUID      0x181A  // UUID serwisu środowiskowego
+#define CHARACTERISTIC_UUID 0x2A6E // UUID charakterystyki temperatury
 
-// Definicje nut (częstotliwości w Hz)
+#define NOTE_B3  247
 #define NOTE_C4  262
 #define NOTE_D4  294
 #define NOTE_E4  330
@@ -56,14 +72,21 @@ static TaskHandle_t wifi_task_handle = NULL;
 #define NOTE_B4  494
 #define NOTE_C5  523
 
-// Melodia i długość nut
+// Jingle Bells - nuty i czas trwania
 int melody[] = {
-    NOTE_C4, NOTE_D4, NOTE_E4, NOTE_F4, NOTE_G4, NOTE_A4, NOTE_B4, NOTE_C5
+    NOTE_E4, NOTE_E4, NOTE_E4, NOTE_E4, NOTE_E4, NOTE_E4, 
+    NOTE_E4, NOTE_G4, NOTE_C4, NOTE_D4, NOTE_E4,
+    NOTE_F4, NOTE_F4, NOTE_F4, NOTE_F4, NOTE_F4, NOTE_E4, NOTE_E4, 
+    NOTE_E4, NOTE_E4, NOTE_E4, NOTE_D4, NOTE_D4, NOTE_E4, NOTE_D4, NOTE_G4
 };
 
 int noteDurations[] = {
-    500, 500, 500, 500, 500, 500, 500, 500
+    300, 300, 600, 300, 300, 600, 
+    300, 300, 300, 300, 600,
+    300, 300, 300, 300, 300, 300, 300,
+    300, 300, 300, 300, 300, 300, 600, 600
 };
+
 
 // Funkcja odtwarzania dźwięku
 void play_tone(uint32_t frequency, uint32_t duration_ms) {
@@ -90,25 +113,85 @@ void play_tone(uint32_t frequency, uint32_t duration_ms) {
     ledc_stop(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 0);
 }
 
-// Funkcja odtwarzania melodii
+
+// Funkcja odtwarzania melodii Jingle Bells
 void play_melody() {
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < sizeof(melody) / sizeof(melody[0]); i++) {
         if (stop_signal) break;
         play_tone(melody[i], noteDurations[i]);
-        vTaskDelay(pdMS_TO_TICKS(100));  // Przerwa między nutami
+        vTaskDelay(pdMS_TO_TICKS(100));  // Krótka przerwa między nutami
     }
 }
 
-// void check_temperature_and_alert() {
-//     float temperature, pressure;
-//     bmp280_read_float(&temperature, &pressure, NULL);
+// Funkcja migania diody LED
+void blink_led_task(void *arg) {
+    while (!stop_signal) {
+        gpio_set_level(LED_PIN, 1);
+        vTaskDelay(pdMS_TO_TICKS(500));
+        gpio_set_level(LED_PIN, 0);
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+    vTaskDelete(NULL);
+}
 
-//     if (temperature > TEMP_THRESHOLD) {
-//         gpio_set_level(BUZZER_PIN, 1);  // Włącz buzzer
-//     } else {
-//         gpio_set_level(BUZZER_PIN, 0);  // Wyłącz buzzer
-//     }
-// }
+// Task do sterowania LED i buzzera
+void led_buzzer_task(void *arg) {
+    ESP_LOGI(TAG, "Rozpoczynam miganie LED i odtwarzanie melodii...");
+
+    while (!stop_signal) {
+        gpio_set_level(LED_PIN, 1);  // Włącz LED
+        play_melody();  // Odtwarzanie melodii
+
+        gpio_set_level(LED_PIN, 0);  // Wyłącz LED
+        vTaskDelay(pdMS_TO_TICKS(1000));  // Przerwa przed kolejnym cyklem
+    }
+
+    ESP_LOGI(TAG, "LED i buzzer zostały wyłączone na stałe.");
+    vTaskDelete(NULL);
+}
+
+
+// Funkcja sprawdzająca czujniki
+void check_sensors_task(void *arg) {
+    bmp280_config_t bmp280_config;
+    bmp280_config.i2c_port = I2C_NUM_0;
+    bmp280_config.i2c_address = 0x76;  // Adres czujnika BMP280
+    bmp280_config.oversampling_temp = 1;
+    bmp280_config.oversampling_press = 1;
+    bmp280_config.mode = BMP280_MODE_NORMAL;
+
+    if (bmp280_init(&bmp280_config) != ESP_OK) {
+        ESP_LOGE(TAG, "Nie udało się zainicjalizować BMP280");
+        return;
+    }
+
+    mq2_init();
+    float temperature;
+
+    while (1) {
+        uint16_t gas_value = mq2_read();
+        if (bmp280_read_temperature(&bmp280_config, &temperature) != ESP_OK) {
+            ESP_LOGE(TAG, "Błąd odczytu temperatury");
+            temperature = -1;
+        }
+
+        ESP_LOGI(TAG, "Temperatura: %.2f °C, Poziom gazu: %d", temperature, gas_value);
+
+        // Sprawdzenie warunków alarmowych
+        if (temperature > TEMP_THRESHOLD || gas_value > MQ2_THRESHOLD) {
+            if (!stop_signal) {
+                ESP_LOGW(TAG, "PRZEKROCZONO PROGI! AKTYWACJA ALARMU!");
+                stop_signal = false;
+                //xTaskCreate(led_buzzer_task, "led_buzzer_task", 4096, NULL, 5, NULL);
+                //mqtt_manager_send("sensor/alarm", "Przekroczono progi bezpieczeństwa!");
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(5000));
+    }
+}
+
+
 
 
 
@@ -141,10 +224,6 @@ void configure_button() {
     gpio_config(&io_conf);
 }
 
-/**
- * Bardzo uproszczona pętla sprawdzająca przycisk.
- * Przy dłuższym wciśnięciu wchodzimy w "reset_config".
- */
 
 void init_reset_button(void)
 {
@@ -217,8 +296,8 @@ void configure_io_pins() {
     gpio_set_direction(LED_PIN, GPIO_MODE_OUTPUT);
 
     // // Konfiguracja pinu buzzera jako wyjście
-    // gpio_reset_pin(BUZZER_PIN);
-    // gpio_set_direction(BUZZER_PIN, GPIO_MODE_OUTPUT);
+    gpio_reset_pin(BUZZER_PIN);
+    gpio_set_direction(BUZZER_PIN, GPIO_MODE_OUTPUT);
 
     // Konfiguracja pinu przycisku jako wejście z rezystorem pull-up
     gpio_reset_pin(BUTTON_PIN);
@@ -243,25 +322,43 @@ void button_task(void *arg) {
     }
 }
 
-// Task do sterowania LED i buzzera
-void led_buzzer_task(void *arg) {
-    ESP_LOGI(TAG, "Rozpoczynam miganie LED i odtwarzanie melodii...");
+void i2c_master_init() {
+    i2c_config_t conf = {
+        .mode = I2C_MODE_MASTER,
+        .sda_io_num = I2C_MASTER_SDA_IO,
+        .sda_pullup_en = GPIO_PULLUP_ENABLE,
+        .scl_io_num = I2C_MASTER_SCL_IO,
+        .scl_pullup_en = GPIO_PULLUP_ENABLE,
+        .master.clk_speed = I2C_MASTER_FREQ_HZ,
+    };
+    i2c_param_config(I2C_MASTER_NUM, &conf);
 
-    while (!stop_signal) {
-        gpio_set_level(LED_PIN, 1);  // Włącz LED
-        play_melody();  // Odtwarzanie melodii
-
-        gpio_set_level(LED_PIN, 0);  // Wyłącz LED
-        vTaskDelay(pdMS_TO_TICKS(1000));  // Przerwa przed kolejnym cyklem
+    esp_err_t err = i2c_driver_install(I2C_MASTER_NUM, I2C_MODE_MASTER,
+                                       I2C_MASTER_RX_BUF_DISABLE,
+                                       I2C_MASTER_TX_BUF_DISABLE, 0);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "I2C driver installation failed: %s\n", esp_err_to_name(err));
+    } else {
+        ESP_LOGI(TAG, "I2C configuration success!");
     }
-
-    ESP_LOGI(TAG, "LED i buzzer zostały wyłączone na stałe.");
-    vTaskDelete(NULL);
 }
 
 
 void app_main(void)
 {
+    //===================================================BMP280==============================================================
+    i2c_master_init();
+
+        // Konfiguracja czujnika BMP280 
+    bmp280_config_t config = {
+        .i2c_port = I2C_NUM_0,           // Port I2C używany do komunikacji
+        .i2c_address = 0x76,            // Adres I2C czujnika BMP280 
+        .mode = BMP280_MODE_NORMAL,     // Tryb pracy czujnika: normalny 
+        .oversampling_temp = OS_X2,     // Oversampling temperatury: x2 
+        .oversampling_press = OS_X2     // Oversampling ciśnienia: x2 
+    };
+
+    //=================================================================================================================
 
     // Konfiguracja pinu przyciskux`
     gpio_config_t io_conf = {
@@ -273,17 +370,21 @@ void app_main(void)
     };
     gpio_config(&io_conf);
 
+
+
     // Uruchamiamy Wi-Fi manager bez resetu
     // - jeśli w NVS jest konfiguracja, przejdzie w STA
     // - jeśli nie ma, przejdzie w AP
     //========================================================WIFI MANAGER==============================================================
-    // init_reset_button();
-    // xTaskCreate(reset_button_task, "reset_button_task", 2048, NULL, 10, NULL);
+    init_reset_button();
+    xTaskCreate(reset_button_task, "reset_button_task", 2048, NULL, 10, NULL);
 
-    // // Uruchomienie taska Wi-Fi po starcie
-    // bool reset_wifi = false;
-    // xTaskCreate(wifi_manager_task, "wifi_manager_task", 4096, (void *)&reset_wifi, 5, &wifi_task_handle);
-    // ESP_LOGI(TAG, "Inicjalizacja systemu...");
+    // Uruchomienie taska Wi-Fi po starcie
+    bool reset_wifi = false;
+    xTaskCreate(wifi_manager_task, "wifi_manager_task", 4096, (void *)&reset_wifi, 5, &wifi_task_handle);
+    ESP_LOGI(TAG, "Inicjalizacja systemu...");
+    
+    
     
     //====================================================BUZZER BUTTON==================================================================
     // // Resetowanie i konfiguracja pinu buzzera jako wyjście
@@ -302,36 +403,71 @@ void app_main(void)
 
     // int button_state = 1;  // Stan przycisku (początkowo nienaciśnięty)
     // int previous_button_state = 1;  // Poprzedni stan przycisku
-    //======================================================================================================================
+    
 
-    // ======================Initialize MQTT Manager========================================
-    if (init_mqtt_manager(MQTT_BROKER_URI, MQTT_USER, MQTT_PASSWORD) != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to initialize MQTT Manager");
-        return;
-    }
-    //=====================================================================
+    // ============================================Initialize MQTT Manager===============================================================
+    // if (init_mqtt_manager(MQTT_BROKER_URI, MQTT_USER, MQTT_PASSWORD) != ESP_OK) {
+    //     ESP_LOGE(TAG, "Failed to initialize MQTT Manager");
+    //     return;
+    // }
+    //===================================================================================================================================
+
 
     // Konfiguracja pinu jako wyjście
     configure_io_pins();
-
-    xTaskCreate(led_buzzer_task, "led_buzzer_task", 4096, NULL, 5, NULL);
+    // Uruchomienie tasków
+    xTaskCreate(check_sensors_task, "check_sensors_task", 4096, NULL, 5, NULL);
     xTaskCreate(button_task, "button_task", 2048, NULL, 5, NULL);
 
+    xTaskCreate(led_buzzer_task, "led_buzzer_task", 4096, NULL, 5, NULL);
+    // xTaskCreate(button_task, "button_task", 2048, NULL, 5, NULL);
+    char test_topic[100];
+    snprintf(test_topic, sizeof(test_topic), "test");
+    
+    
+    // // Inicjalizacja czujnika MQ-2
+    // mq2_init();
+
     while (1) {
+
+        // uint16_t gas_value = mq2_read();
+        
+        // if (mq2_detect_gas()) {
+        //     ESP_LOGW("APP", "Wykryto niebezpieczny poziom gazu!");
+        // } else {
+        //     ESP_LOGI("APP", "Poziom gazu w normie.");
+        // }
+
+        
 
 
         // check_reset_button();
         // Jeśli chcesz sprawdzić parametry co jakiś czas:
-        // nvs_wifi_config_t cfg;
-        // if (wifi_manager_get_config(&cfg) == ESP_OK) {
-        //     //ESP_LOGI(TAG, "Current config: SSID=%s, PASS=%s, MQTT=%s",
-        //               //cfg.wifi_ssid, cfg.wifi_pass, cfg.mqtt_host);
+        nvs_wifi_config_t cfg;
+        if (wifi_manager_get_config(&cfg) == ESP_OK) {
+            //ESP_LOGI(TAG, "Current config: SSID=%s, PASS=%s, MQTT=%s",
+                      //cfg.wifi_ssid, cfg.wifi_pass, cfg.mqtt_host);
+        }
+
+
+
+        
+        // char topic[MQTT_TOPIC_MAX_LEN] = {0};
+        // char message[MQTT_MSG_MAX_LEN] = {0};
+
+        // TickType_t wait_time = pdMS_TO_TICKS(5000);  // Czekaj 5 sekund na wiadomość
+
+        // esp_err_t ret = mqtt_manager_receive(topic, sizeof(topic), message, sizeof(message), wait_time);
+
+        // if (ret == ESP_OK) {
+        //     ESP_LOGI(TAG, "Odebrano wiadomość:");
+        //     ESP_LOGI(TAG, "Temat: %s", topic);
+        //     ESP_LOGI(TAG, "Treść: %s", message);
+        // } else if (ret == ESP_ERR_TIMEOUT) {
+        //     ESP_LOGW(TAG, "Czas oczekiwania na wiadomość upłynął");
+        // } else {
+        //     ESP_LOGE(TAG, "Błąd odbioru wiadomości MQTT");
         // }
-
-
-
-
-
         // button_state = gpio_get_level(BUTTON_PIN);
 
         // // Sprawdzenie stanu przycisku (0 oznacza naciśnięty przycisk)
@@ -343,8 +479,8 @@ void app_main(void)
 
 
         // previous_button_state = button_state;  // Aktualizacja poprzedniego stanu
-
-        vTaskDelay(pdMS_TO_TICKS(100));  // Oczekiwanie 100 ms dla stabilności
+        //mqtt_manager_send(test_topic, "TEST");
+        vTaskDelay(pdMS_TO_TICKS(3000));  // Oczekiwanie 100 ms dla stabilności
     
     }
          

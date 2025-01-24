@@ -7,11 +7,16 @@ idf_component_register(
         "bmp280/bmp280.c"
         "nvs/nvs_manager.c"
         "wifi/wifi_manager.c"
+        "mqtt/mqtt_manager.c"
+        "mq2/mq2.c"
     INCLUDE_DIRS
         "."            # katalog 'main/'
         "bmp280"       # katalog z bmp280.h
         "nvs"          # katalog z nvs_manager.h
         "wifi"         # katalog z wifi_manager.h
+        "mqtt"         # katalog z mqtt_manager.h
+        "mq2"         # katalog z mq2.h
     REQUIRES
 
 )
+

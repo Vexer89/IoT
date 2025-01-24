@@ -5,5 +5,5 @@
   "idf.portWin": "COM4",
   "idf.toolsPathWin": "C:\\Users\\krzys\\.espressif",
   "idf.flashType": "UART",
-  "cmake.sourceDirectory": "${workspaceFolder}/Users/krzysztofczerenko/project-name/main"
+  "cmake.sourceDirectory": "${workspaceFolder}/Users/krzysztofczerenko/project-name"
 }

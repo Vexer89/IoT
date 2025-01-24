@@ -35,29 +35,12 @@ static void mqtt_receive_task(void *pvParameters);
 // Initialize the MQTT manager
 esp_err_t init_mqtt_manager(const char *broker_uri, const char *user, const char *password)
 {
-    // Initialize NVS
-    esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        ret = nvs_flash_init();
-    }
-    ESP_ERROR_CHECK(ret);
-
-    // Initialize network interface
-    ESP_ERROR_CHECK(esp_netif_init());
-
-    // Create default event loop
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-
-    // Initialize Wi-Fi or Ethernet (Assuming Wi-Fi for this example)
-    // Replace with your connectivity initialization
-    ESP_ERROR_CHECK(example_connect());
-
+   
     // Configure MQTT client
     esp_mqtt_client_config_t mqtt_cfg = {
         .broker.address.uri = broker_uri,
         .credentials.username = user,
-        .credentials.password = password,
+        .credentials.authentication.password = password,
         // Optionally set other parameters like port, client_id, etc.
     };
 
@@ -209,6 +192,10 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         ESP_LOGI(TAG, "MQTT_EVENT_CONNECTED");
         // Subscribe to topics if needed
         // Example: esp_mqtt_client_subscribe(client, "/topic/data", 0);
+
+        int msg_id = esp_mqtt_client_subscribe(client, "test", 0);
+        ESP_LOGI(TAG, "Subscribed to test, msg_id=%d", msg_id);
+
         break;
     case MQTT_EVENT_DISCONNECTED:
         ESP_LOGI(TAG, "MQTT_EVENT_DISCONNECTED");
