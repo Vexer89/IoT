@@ -7,6 +7,7 @@
 static const char *TAG = "NVS_MANAGER";
 static bool s_nvs_inited = false;
 
+
 /**
  * Inicjalizacja NVS – wywołaj raz w aplikacji (np. w wifi_manager_init()).
  */
@@ -185,21 +186,21 @@ esp_err_t nvs_manager_get_thresholds(nvs_threshold_config_t *cfg) {
     }
 
     nvs_handle_t handle;
-    esp_err_t err = nvs_open("threshold_config", NVS_READONLY, &handle);
+    esp_err_t err = nvs_open("t_conf", NVS_READONLY, &handle);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "No threshold config in NVS or can't open it (%s)", esp_err_to_name(err));
         return err;
     }
 
     // Pobranie wartości temperatury i dymu
-    err = nvs_get_i32(handle, "temp_threshold", &cfg->temp_threshold);
+    err = nvs_get_i32(handle, "temp_td", &cfg->temp_threshold);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to read temp_threshold from NVS: %s", esp_err_to_name(err));
         nvs_close(handle);
         return err;
     }
 
-    err = nvs_get_i32(handle, "smoke_threshold", &cfg->smoke_threshold);
+    err = nvs_get_i32(handle, "smoke_td", &cfg->smoke_threshold);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to read smoke_threshold from NVS: %s", esp_err_to_name(err));
         nvs_close(handle);
@@ -223,20 +224,20 @@ esp_err_t nvs_manager_set_thresholds(const nvs_threshold_config_t *cfg) {
     }
 
     nvs_handle_t handle;
-    esp_err_t err = nvs_open("threshold_config", NVS_READWRITE, &handle);
+    esp_err_t err = nvs_open("t_conf", NVS_READWRITE, &handle);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Could not open threshold_config namespace: %s", esp_err_to_name(err));
         return err;
     }
 
-    err = nvs_set_i32(handle, "temp_threshold", cfg->temp_threshold);
+    err = nvs_set_i32(handle, "temp_td", cfg->temp_threshold);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to write temp_threshold to NVS");
         nvs_close(handle);
         return err;
     }
 
-    err = nvs_set_i32(handle, "smoke_threshold", cfg->smoke_threshold);
+    err = nvs_set_i32(handle, "smoke_td", cfg->smoke_threshold);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to write smoke_threshold to NVS");
         nvs_close(handle);

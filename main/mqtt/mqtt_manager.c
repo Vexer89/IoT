@@ -16,6 +16,8 @@ static const char *TAG = "mqtt_manager";
 
 nvs_mqtt_config_t mqtt_custom_cfg;
 
+nvs_threshold_config_t thresholds;
+
 // MQTT client handle
 static esp_mqtt_client_handle_t mqtt_client = NULL;
 
@@ -25,6 +27,43 @@ static QueueHandle_t mqtt_receive_queue = NULL;
 
 // Mutex for thread-safe operations
 static SemaphoreHandle_t mqtt_mutex = NULL;
+
+void handle_mqtt_message(const char *topic, const char *message) {
+    
+    // Pobranie aktualnej konfiguracji progów z NVS
+    // if (nvs_manager_get_thresholds(&thresholds) != ESP_OK) {
+    //     ESP_LOGE(TAG, "Failed to load current thresholds from NVS");
+    //     return;
+    // }
+
+    // Sprawdzenie, czy otrzymano temat do aktualizacji progów temperatury
+    if (strstr(topic, "config/threshold/temperature")) {
+        thresholds.temp_threshold = atoi(message);
+        ESP_LOGI(TAG, "Updating temp_threshold to %d", thresholds.temp_threshold);
+    }
+    // Sprawdzenie, czy otrzymano temat do aktualizacji progów dymu
+    else if (strstr(topic, "config/threshold/smoke")) {
+        thresholds.smoke_threshold = atoi(message);
+        ESP_LOGI(TAG, "Updating smoke_threshold to %d", thresholds.smoke_threshold);
+    }
+    // Sprawdzenie, czy otrzymano temat resetu Wi-Fi
+    else if (strstr(topic, "config/reset")) {
+        ESP_LOGW(TAG, "Received reset command, starting Wi-Fi reset task...");
+        //xTaskCreate(reset_wifi_task, "reset_wifi_task", 4096, NULL, 5, NULL);
+        return;
+    } else {
+        ESP_LOGW(TAG, "Unknown topic received: %s", topic);
+        return;
+    }
+
+    // Zapis nowych progów do NVS
+    if (nvs_manager_set_thresholds(&thresholds) == ESP_OK) {
+        ESP_LOGI(TAG, "Thresholds updated successfully in NVS");
+    } else {
+        ESP_LOGE(TAG, "Failed to save new thresholds to NVS");
+    }
+}
+
 
 // Event handler for MQTT events
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data);
@@ -241,27 +280,24 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         ESP_LOGI(TAG, "MQTT_EVENT_PUBLISHED, msg_id=%d", event->msg_id);
         break;
     case MQTT_EVENT_DATA:
-        ESP_LOGI(TAG, "MQTT_EVENT_DATA");
-        // Handle incoming data
-        // Optionally, you can push received messages to a queue
-        if (mqtt_receive_queue != NULL) {
-            char buffer[MQTT_TOPIC_MAX_LEN + MQTT_MSG_MAX_LEN];
-            memset(buffer, 0, sizeof(buffer));
+        {
+            // Bufory na temat i wiadomość (pamiętaj o znakach końca stringu)
+            char topic[event->topic_len + 1];
+            char data[event->data_len + 1];
 
-            // Copy topic
-            int len = event->topic_len < MQTT_TOPIC_MAX_LEN - 1 ? event->topic_len : MQTT_TOPIC_MAX_LEN - 1;
-            strncpy(buffer, event->topic, len);
+            // Skopiowanie danych do buforów i dołożenie terminatora '\0'
+            strncpy(topic, event->topic, event->topic_len);
+            topic[event->topic_len] = '\0';
 
-            // Copy data
-            len = event->data_len < MQTT_MSG_MAX_LEN - 1 ? event->data_len : MQTT_MSG_MAX_LEN - 1;
-            strncpy(buffer + MQTT_TOPIC_MAX_LEN, event->data, len);
+            strncpy(data, event->data, event->data_len);
+            data[event->data_len] = '\0';
 
-            // Send to receive queue
-            if (xQueueSend(mqtt_receive_queue, buffer, portMAX_DELAY) != pdTRUE) {
-                ESP_LOGE(TAG, "Failed to send to receive queue");
-            }
+            ESP_LOGI(TAG, "MQTT_EVENT_DATA: topic=%s, data=%s", topic, data);
+
+            // Wywołujemy nasz handler logiki aplikacji
+            handle_mqtt_message(topic, data);
+            break;
         }
-        break;
     case MQTT_EVENT_ERROR:
         ESP_LOGE(TAG, "MQTT_EVENT_ERROR");
         if (event->error_handle->error_type == MQTT_ERROR_TYPE_TCP_TRANSPORT) {

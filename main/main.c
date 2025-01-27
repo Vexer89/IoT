@@ -86,7 +86,7 @@ int noteDurations[] = {
 TaskHandle_t LedBuzzerTaskHandle = NULL;
 TaskHandle_t BlinkLedTaskHandle = NULL;
 
-nvs_threshold_config_t thresholds;
+nvs_threshold_config_t tthresholds;
 
 int contains_substring(const char *str, const char *substr) {
     return strstr(str, substr) != NULL;
@@ -198,7 +198,7 @@ void check_sensors_task(void *arg) {
         mqtt_manager_send("sensors/smoke", gas_str);
 
         // Sprawdzenie warunków alarmowych
-        if (temperature > thresholds.temp_threshold || gas_value > thresholds.smoke_threshold) {
+        if (temperature > tthresholds.temp_threshold || gas_value > tthresholds.smoke_threshold) {
             if (!stop_signal) {
                 ESP_LOGW(TAG, "PRZEKROCZONO PROGI! AKTYWACJA ALARMU!");
                 stop_signal = false;
@@ -395,74 +395,74 @@ void i2c_master_init() {
     }
 }
 
-void handle_mqtt_message(const char *topic, const char *message) {
+// void handle_mqtt_message(const char *topic, const char *message) {
 
-    // Pobranie aktualnej konfiguracji progów z NVS
-    if (nvs_manager_get_thresholds(&thresholds) != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to load current thresholds from NVS");
-        return;
-    }
+//     // Pobranie aktualnej konfiguracji progów z NVS
+//     if (nvs_manager_get_thresholds(&thresholds) != ESP_OK) {
+//         ESP_LOGE(TAG, "Failed to load current thresholds from NVS");
+//         return;
+//     }
 
-    // Sprawdzenie, czy otrzymano temat do aktualizacji progów temperatury
-    if (contains_substring(topic, "config/threshold/temperature")) {
-        thresholds.temp_threshold = atoi(message);
-        ESP_LOGI(TAG, "Updating temp_threshold to %d", thresholds.temp_threshold);
-    }
-    // Sprawdzenie, czy otrzymano temat do aktualizacji progów dymu
-    else if (contains_substring(topic, "config/threshold/smoke")) {
-        thresholds.smoke_threshold = atoi(message);
-        ESP_LOGI(TAG, "Updating smoke_threshold to %d", thresholds.smoke_threshold);
-    }
-    // Sprawdzenie, czy otrzymano temat resetu Wi-Fi
-    else if (contains_substring(topic, "config/reset")) {
-        ESP_LOGW(TAG, "Received reset command, starting Wi-Fi reset task...");
-        xTaskCreate(reset_wifi_task, "reset_wifi_task", 4096, NULL, 5, NULL);
-        return;
-    } else {
-        ESP_LOGW(TAG, "Unknown topic received: %s", topic);
-        return;
-    }
+//     // Sprawdzenie, czy otrzymano temat do aktualizacji progów temperatury
+//     if (contains_substring(topic, "config/threshold/temperature")) {
+//         thresholds.temp_threshold = atoi(message);
+//         ESP_LOGI(TAG, "Updating temp_threshold to %d", thresholds.temp_threshold);
+//     }
+//     // Sprawdzenie, czy otrzymano temat do aktualizacji progów dymu
+//     else if (contains_substring(topic, "config/threshold/smoke")) {
+//         thresholds.smoke_threshold = atoi(message);
+//         ESP_LOGI(TAG, "Updating smoke_threshold to %d", thresholds.smoke_threshold);
+//     }
+//     // Sprawdzenie, czy otrzymano temat resetu Wi-Fi
+//     else if (contains_substring(topic, "config/reset")) {
+//         ESP_LOGW(TAG, "Received reset command, starting Wi-Fi reset task...");
+//         xTaskCreate(reset_wifi_task, "reset_wifi_task", 4096, NULL, 5, NULL);
+//         return;
+//     } else {
+//         ESP_LOGW(TAG, "Unknown topic received: %s", topic);
+//         return;
+//     }
 
-    // Zapis nowych progów do NVS
-    if (nvs_manager_set_thresholds(&thresholds) == ESP_OK) {
-        ESP_LOGI(TAG, "Thresholds updated successfully in NVS");
-    } else {
-        ESP_LOGE(TAG, "Failed to save new thresholds to NVS");
-    }
-}
+//     // Zapis nowych progów do NVS
+//     if (nvs_manager_set_thresholds(&thresholds) == ESP_OK) {
+//         ESP_LOGI(TAG, "Thresholds updated successfully in NVS");
+//     } else {
+//         ESP_LOGE(TAG, "Failed to save new thresholds to NVS");
+//     }
+// }
 
-// Task odbierający wiadomości MQTT
-void mqtt_receive_task(void *pvParameter) {
-    char topic[128];
-    char message[128];
-    const TickType_t wait_time = pdMS_TO_TICKS(15000);  // 5 sekund timeout
-    ESP_LOGI(TAG, "Starting MQTT receive task...");
-    while (1) {
-        esp_err_t ret = mqtt_manager_receive(topic, sizeof(topic), message, sizeof(message), wait_time);
+// // Task odbierający wiadomości MQTT
+// void mqtt_receive_task(void *pvParameter) {
+//     char topic[128];
+//     char message[128];
+//     const TickType_t wait_time = pdMS_TO_TICKS(15000);  // 5 sekund timeout
+//     ESP_LOGI(TAG, "Starting MQTT receive task...");
+//     while (1) {
+//         esp_err_t ret = mqtt_manager_receive(topic, sizeof(topic), message, sizeof(message), wait_time);
 
-        if (ret == ESP_OK) {
-            ESP_LOGI(TAG, "Received MQTT message:");
-            ESP_LOGI(TAG, "Topic: %s", topic);
-            ESP_LOGI(TAG, "Message: %s", message);
+//         if (ret == ESP_OK) {
+//             ESP_LOGI(TAG, "Received MQTT message:");
+//             ESP_LOGI(TAG, "Topic: %s", topic);
+//             ESP_LOGI(TAG, "Message: %s", message);
 
-            // Obsługa otrzymanej wiadomości
-            handle_mqtt_message(topic, message);
-        } else if (ret == ESP_ERR_TIMEOUT) {
-            ESP_LOGW(TAG, "MQTT receive timeout, waiting...");
-        } else {
-            ESP_LOGE(TAG, "Error receiving MQTT message");
-        }
+//             // Obsługa otrzymanej wiadomości
+//             handle_mqtt_message(topic, message);
+//         } else if (ret == ESP_ERR_TIMEOUT) {
+//             ESP_LOGW(TAG, "MQTT receive timeout, waiting...");
+//         } else {
+//             ESP_LOGE(TAG, "Error receiving MQTT message");
+//         }
 
-        // Sprawdzanie stanu przycisku
-        int button_state = gpio_get_level(BUTTON_PIN);
-        if (button_state == 0) {
-            ESP_LOGW(TAG, "Button pressed, triggering Wi-Fi reset...");
-            xTaskCreate(reset_wifi_task, "reset_wifi_task", 4096, NULL, 5, NULL);
-        }
+//         // Sprawdzanie stanu przycisku
+//         int button_state = gpio_get_level(BUTTON_PIN);
+//         if (button_state == 0) {
+//             ESP_LOGW(TAG, "Button pressed, triggering Wi-Fi reset...");
+//             xTaskCreate(reset_wifi_task, "reset_wifi_task", 4096, NULL, 5, NULL);
+//         }
 
-        vTaskDelay(pdMS_TO_TICKS(500)); // Opóźnienie między kolejnymi iteracjami
-    }
-}
+//         vTaskDelay(pdMS_TO_TICKS(500)); // Opóźnienie między kolejnymi iteracjami
+//     }
+// }
 
 
 void app_main(void)
@@ -561,10 +561,10 @@ void app_main(void)
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 
-    esp_err_t err = nvs_manager_get_thresholds(&thresholds);
+    esp_err_t err = nvs_manager_get_thresholds(&tthresholds);
     if (err != ESP_OK) {
-        thresholds.temp_threshold = TEMP_THRESHOLD;
-        thresholds.smoke_threshold = MQ2_THRESHOLD;
+        tthresholds.temp_threshold = TEMP_THRESHOLD;
+        tthresholds.smoke_threshold = MQ2_THRESHOLD;
     }
 
     vTaskDelay(pdMS_TO_TICKS(10000));  // Odczekaj 5 sekund na stabilizację Wi-Fi
@@ -606,7 +606,7 @@ void app_main(void)
     // // Inicjalizacja czujnika MQ-2
     // mq2_init
 
-    xTaskCreate(mqtt_receive_task, "mqtt_receive_task", 4096, NULL, 5, NULL);
+    //xTaskCreate(mqtt_receive_task, "mqtt_receive_task", 4096, NULL, 5, NULL);
 
 
     while (1) {
