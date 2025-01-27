@@ -88,6 +88,9 @@ TaskHandle_t BlinkLedTaskHandle = NULL;
 
 nvs_threshold_config_t thresholds;
 
+int contains_substring(const char *str, const char *substr) {
+    return strstr(str, substr) != NULL;
+}
 
 // Funkcja odtwarzania dźwięku
 void play_tone(uint32_t frequency, uint32_t duration_ms) {
@@ -188,14 +191,14 @@ void check_sensors_task(void *arg) {
         snprintf(temp_str, sizeof(temp_str), "%.2f", temperature);
         mqtt_manager_send("sensors/temperature", temp_str);
         char pressure_str[16];
-        snprintf(pressure_str, sizeof(pressure_str), "%.2f", pressure);
+        snprintf(pressure_str, sizeof(pressure_str), "%.2f", pressure/100.0);
         mqtt_manager_send("sensors/pressure", pressure_str);
         char gas_str[16];
         snprintf(gas_str, sizeof(gas_str), "%d", gas_value);
         mqtt_manager_send("sensors/smoke", gas_str);
 
         // Sprawdzenie warunków alarmowych
-        if (temperature > TEMP_THRESHOLD || gas_value > MQ2_THRESHOLD) {
+        if (temperature > thresholds.temp_threshold || gas_value > thresholds.smoke_threshold) {
             if (!stop_signal) {
                 ESP_LOGW(TAG, "PRZEKROCZONO PROGI! AKTYWACJA ALARMU!");
                 stop_signal = false;
@@ -401,17 +404,17 @@ void handle_mqtt_message(const char *topic, const char *message) {
     }
 
     // Sprawdzenie, czy otrzymano temat do aktualizacji progów temperatury
-    if (strstr(topic, "config/threshold/temperature")) {
+    if (contains_substring(topic, "config/threshold/temperature")) {
         thresholds.temp_threshold = atoi(message);
         ESP_LOGI(TAG, "Updating temp_threshold to %d", thresholds.temp_threshold);
     }
     // Sprawdzenie, czy otrzymano temat do aktualizacji progów dymu
-    else if (strstr(topic, "config/threshold/smoke")) {
+    else if (contains_substring(topic, "config/threshold/smoke")) {
         thresholds.smoke_threshold = atoi(message);
         ESP_LOGI(TAG, "Updating smoke_threshold to %d", thresholds.smoke_threshold);
     }
     // Sprawdzenie, czy otrzymano temat resetu Wi-Fi
-    else if (strstr(topic, "config/reset")) {
+    else if (contains_substring(topic, "config/reset")) {
         ESP_LOGW(TAG, "Received reset command, starting Wi-Fi reset task...");
         xTaskCreate(reset_wifi_task, "reset_wifi_task", 4096, NULL, 5, NULL);
         return;
@@ -432,8 +435,8 @@ void handle_mqtt_message(const char *topic, const char *message) {
 void mqtt_receive_task(void *pvParameter) {
     char topic[128];
     char message[128];
-    const TickType_t wait_time = pdMS_TO_TICKS(5000);  // 5 sekund timeout
-
+    const TickType_t wait_time = pdMS_TO_TICKS(15000);  // 5 sekund timeout
+    ESP_LOGI(TAG, "Starting MQTT receive task...");
     while (1) {
         esp_err_t ret = mqtt_manager_receive(topic, sizeof(topic), message, sizeof(message), wait_time);
 
@@ -457,7 +460,7 @@ void mqtt_receive_task(void *pvParameter) {
             xTaskCreate(reset_wifi_task, "reset_wifi_task", 4096, NULL, 5, NULL);
         }
 
-        vTaskDelay(pdMS_TO_TICKS(1000)); // Opóźnienie między kolejnymi iteracjami
+        vTaskDelay(pdMS_TO_TICKS(500)); // Opóźnienie między kolejnymi iteracjami
     }
 }
 
@@ -557,6 +560,13 @@ void app_main(void)
     {
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
+
+    esp_err_t err = nvs_manager_get_thresholds(&thresholds);
+    if (err != ESP_OK) {
+        thresholds.temp_threshold = TEMP_THRESHOLD;
+        thresholds.smoke_threshold = MQ2_THRESHOLD;
+    }
+
     vTaskDelay(pdMS_TO_TICKS(10000));  // Odczekaj 5 sekund na stabilizację Wi-Fi
     
     
@@ -596,7 +606,8 @@ void app_main(void)
     // // Inicjalizacja czujnika MQ-2
     // mq2_init
 
-    //xTaskCreate(mqtt_receive_task, "mqtt_receive_task", 2048, NULL, 5, NULL);
+    xTaskCreate(mqtt_receive_task, "mqtt_receive_task", 4096, NULL, 5, NULL);
+
 
     while (1) {
 
