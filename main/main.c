@@ -11,6 +11,10 @@
 #include "freertos/task.h"
 #include "driver/gpio.h"
 #include "driver/i2c_master.h"
+#include "esp_wifi.h"
+#include "esp_bt.h"
+#include "esp_bt_main.h"
+#include "nvs_flash.h"
 
 
 //Our libraries
@@ -20,10 +24,11 @@
 #include "mqtt/mqtt_manager.h"
 #include "mq2/mq2.h"
 #include "ble/ble_gatt_server.h"
+#include <esp_wifi_types_generic.h>
 
 
 static bool stop_signal = false;  // Flaga do zatrzymania działania
-
+static bool is_initialized = false;
 
 static const char *TAG = "MAIN";
 
@@ -48,9 +53,7 @@ static TaskHandle_t wifi_task_handle = NULL;
 #define MQ2_THRESHOLD 1500
 
 //#define MQTT_BROKER_URI "mqtt://192.168.144.219:1883"
-#define MQTT_BROKER_URI "mqtt://192.168.55.90:1883"
-#define MQTT_USER NULL
-#define MQTT_PASSWORD NULL // Replace with actual password if any
+
 #define DEVICE_ID "esp32"
 #define SERVICE_UUID      0x181A  // UUID serwisu środowiskowego
 #define CHARACTERISTIC_UUID 0x2A6E // UUID charakterystyki temperatury
@@ -82,6 +85,9 @@ int noteDurations[] = {
 
 TaskHandle_t LedBuzzerTaskHandle = NULL;
 TaskHandle_t BlinkLedTaskHandle = NULL;
+
+nvs_threshold_config_t thresholds;
+
 
 // Funkcja odtwarzania dźwięku
 void play_tone(uint32_t frequency, uint32_t duration_ms) {
@@ -146,7 +152,7 @@ void led_buzzer_task(void *arg) {
 }
 
 
-// Funkcja sprawdzająca czujniki
+// Task do sprawdzania czujników
 void check_sensors_task(void *arg) {
     bmp280_config_t bmp280_config;
     bmp280_config.i2c_port = I2C_NUM_0;
@@ -162,15 +168,31 @@ void check_sensors_task(void *arg) {
 
     mq2_init();
     float temperature;
+    float pressure;
 
     while (1) {
         uint16_t gas_value = mq2_read();
+
         if (bmp280_read_temperature(&bmp280_config, &temperature) != ESP_OK) {
             ESP_LOGE(TAG, "Błąd odczytu temperatury");
             temperature = -1;
         }
 
-        ESP_LOGI(TAG, "Temperatura: %.2f °C, Poziom gazu: %d", temperature, gas_value);
+        if (bmp280_read_pressure(&bmp280_config, &pressure) != ESP_OK) {
+            ESP_LOGE(TAG, "Błąd odczytu ciśnienia");
+            pressure = -1;
+        }
+
+        ESP_LOGI(TAG, "Temperatura: %.2f °C, Ciśnienie: %.2f hPa, Poziom gazu: %d", temperature, pressure / 100.0, gas_value);
+        char temp_str[16];
+        snprintf(temp_str, sizeof(temp_str), "%.2f", temperature);
+        mqtt_manager_send("sensors/temperature", temp_str);
+        char pressure_str[16];
+        snprintf(pressure_str, sizeof(pressure_str), "%.2f", pressure);
+        mqtt_manager_send("sensors/pressure", pressure_str);
+        char gas_str[16];
+        snprintf(gas_str, sizeof(gas_str), "%d", gas_value);
+        mqtt_manager_send("sensors/smoke", gas_str);
 
         // Sprawdzenie warunków alarmowych
         if (temperature > TEMP_THRESHOLD || gas_value > MQ2_THRESHOLD) {
@@ -179,7 +201,8 @@ void check_sensors_task(void *arg) {
                 stop_signal = false;
                 xTaskCreate(led_buzzer_task, "led_buzzer_task", 4096, NULL, 5, &LedBuzzerTaskHandle);
                 xTaskCreate(blink_led_task, "blink_led_task", 4096, NULL, 5, &BlinkLedTaskHandle);
-                mqtt_manager_send("sensor/alarm", "Przekroczono progi bezpieczemstwa!");
+                mqtt_manager_send("alarm", "Przekroczono progi bezpieczeństwa!");
+                ble_alarm_send();
             }
         }
 
@@ -187,19 +210,20 @@ void check_sensors_task(void *arg) {
     }
 }
 
+
 //================BLE-task=========================
-void send_alarm_task(void *pvParameters) {
-    while (1) {
-        ESP_LOGI(TAG, "Wysyłanie alarmu...");
-        esp_err_t ret = ble_gatt_server_send_alarm("ALARM: Pożar wykryty!");
-        if (ret == ESP_OK) {
-            ESP_LOGI(TAG, "Alarm został wysłany");
-        } else {
-            ESP_LOGE(TAG, "Nie udało się wysłać alarmu");
-        }
-        vTaskDelay(pdMS_TO_TICKS(10000));  // Co 10 sekund
-    }
-}
+// void send_alarm_task(void *pvParameters) {
+//     while (1) {
+//         ESP_LOGI(TAG, "Wysyłanie alarmu...");
+//         esp_err_t ret = ble_gatt_server_send_alarm("ALARM: Pożar wykryty!");
+//         if (ret == ESP_OK) {
+//             ESP_LOGI(TAG, "Alarm został wysłany");
+//         } else {
+//             ESP_LOGE(TAG, "Nie udało się wysłać alarmu");
+//         }
+//         vTaskDelay(pdMS_TO_TICKS(10000));  // Co 10 sekund
+//     }
+// }
 //=========================================================
 
 
@@ -268,6 +292,12 @@ void wifi_manager_task(void *pvParameters) {
 
     ESP_LOGI("WiFi", "WiFi initialization completed, deleting task...");
 
+    wifi_mode_t mode;
+    esp_err_t ret = esp_wifi_get_mode(&mode);
+    if (mode == WIFI_MODE_STA) {
+            ESP_LOGI("WIFI_MODE", "ESP32 is in Station mode.");
+            is_initialized = true;
+    }
     wifi_task_handle = NULL;  // Zerowanie uchwytu po zakończeniu
     vTaskDelete(NULL);  // Zakończenie taska po zakończeniu inicjalizacji
 
@@ -362,10 +392,129 @@ void i2c_master_init() {
     }
 }
 
+void handle_mqtt_message(const char *topic, const char *message) {
+
+    // Pobranie aktualnej konfiguracji progów z NVS
+    if (nvs_manager_get_thresholds(&thresholds) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to load current thresholds from NVS");
+        return;
+    }
+
+    // Sprawdzenie, czy otrzymano temat do aktualizacji progów temperatury
+    if (strstr(topic, "config/threshold/temperature")) {
+        thresholds.temp_threshold = atoi(message);
+        ESP_LOGI(TAG, "Updating temp_threshold to %d", thresholds.temp_threshold);
+    }
+    // Sprawdzenie, czy otrzymano temat do aktualizacji progów dymu
+    else if (strstr(topic, "config/threshold/smoke")) {
+        thresholds.smoke_threshold = atoi(message);
+        ESP_LOGI(TAG, "Updating smoke_threshold to %d", thresholds.smoke_threshold);
+    }
+    // Sprawdzenie, czy otrzymano temat resetu Wi-Fi
+    else if (strstr(topic, "config/reset")) {
+        ESP_LOGW(TAG, "Received reset command, starting Wi-Fi reset task...");
+        xTaskCreate(reset_wifi_task, "reset_wifi_task", 4096, NULL, 5, NULL);
+        return;
+    } else {
+        ESP_LOGW(TAG, "Unknown topic received: %s", topic);
+        return;
+    }
+
+    // Zapis nowych progów do NVS
+    if (nvs_manager_set_thresholds(&thresholds) == ESP_OK) {
+        ESP_LOGI(TAG, "Thresholds updated successfully in NVS");
+    } else {
+        ESP_LOGE(TAG, "Failed to save new thresholds to NVS");
+    }
+}
+
+// Task odbierający wiadomości MQTT
+void mqtt_receive_task(void *pvParameter) {
+    char topic[128];
+    char message[128];
+    const TickType_t wait_time = pdMS_TO_TICKS(5000);  // 5 sekund timeout
+
+    while (1) {
+        esp_err_t ret = mqtt_manager_receive(topic, sizeof(topic), message, sizeof(message), wait_time);
+
+        if (ret == ESP_OK) {
+            ESP_LOGI(TAG, "Received MQTT message:");
+            ESP_LOGI(TAG, "Topic: %s", topic);
+            ESP_LOGI(TAG, "Message: %s", message);
+
+            // Obsługa otrzymanej wiadomości
+            handle_mqtt_message(topic, message);
+        } else if (ret == ESP_ERR_TIMEOUT) {
+            ESP_LOGW(TAG, "MQTT receive timeout, waiting...");
+        } else {
+            ESP_LOGE(TAG, "Error receiving MQTT message");
+        }
+
+        // Sprawdzanie stanu przycisku
+        int button_state = gpio_get_level(BUTTON_PIN);
+        if (button_state == 0) {
+            ESP_LOGW(TAG, "Button pressed, triggering Wi-Fi reset...");
+            xTaskCreate(reset_wifi_task, "reset_wifi_task", 4096, NULL, 5, NULL);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(1000)); // Opóźnienie między kolejnymi iteracjami
+    }
+}
+
 
 void app_main(void)
 {
+    esp_err_t ret;
+
+    // Initialize NVS
+    ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_LOGW(TAG, "NVS flash erase required, erasing...");
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+
+    ESP_LOGI(TAG, "NVS initialized successfully.");
+    
+    // Inicjalizacja kontrolera BT przed rozpoczęciem Bluetooth
+    ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT));
+    
+    esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
+    ret = esp_bt_controller_init(&bt_cfg);
+    if (ret) {
+        ESP_LOGE(TAG, "Bluetooth controller initialization failed: %s", esp_err_to_name(ret));
+        return;
+    }
+
+    ret = esp_bt_controller_enable(ESP_BT_MODE_BLE);
+    if (ret) {
+        ESP_LOGE(TAG, "Bluetooth enable failed: %s", esp_err_to_name(ret));
+        return;
+    }
+
+    ret = esp_bluedroid_init();
+    if (ret) {
+        ESP_LOGE(TAG, "Bluedroid initialization failed: %s", esp_err_to_name(ret));
+        return;
+    }
+
+    ret = esp_bluedroid_enable();
+    if (ret) {
+        ESP_LOGE(TAG, "Bluedroid enable failed: %s", esp_err_to_name(ret));
+        return;
+    }
+    ESP_LOGI(TAG, "Bluetooth initialized successfully.");
+
+    ble_gatt_server_init();  // Uruchomienie BLE GATT Servera
     //===================================================BMP280==============================================================
+    // if (ble_alarm_init() != ESP_OK) {
+    //     printf("Błąd inicjalizacji BLE Alarm!\n");
+    //     return;
+    // }
+    // printf("BLE Alarm zainicjalizowany\n");
+
+
     i2c_master_init();
 
         // Konfiguracja czujnika BMP280 
@@ -387,8 +536,8 @@ void app_main(void)
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .intr_type = GPIO_INTR_DISABLE
     };
-    gpio_config(&io_conf);
-
+    gpio_config(&io_conf); 
+ 
 
 
     // Uruchamiamy Wi-Fi manager bez resetu
@@ -401,25 +550,30 @@ void app_main(void)
     // Uruchomienie taska Wi-Fi po starcie
     bool reset_wifi = false;
     xTaskCreate(wifi_manager_task, "wifi_manager_task", 4096, (void *)&reset_wifi, 5, &wifi_task_handle);
+
     ESP_LOGI(TAG, "Inicjalizacja systemu...");
+
+    while (!is_initialized)
+    {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+    vTaskDelay(pdMS_TO_TICKS(10000));  // Odczekaj 5 sekund na stabilizację Wi-Fi
+    
     
 
-    esp_err_t ret = ble_gatt_server_init();
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Inicjalizacja BLE GATT Server nie powiodła się: %s", esp_err_to_name(ret));
-        return;
-    }
-     xTaskCreate(&send_alarm_task, "send_alarm_task", 4096, NULL, 5, NULL);
+    // esp_err_t ret = ble_gatt_server_init();
+    // if (ret != ESP_OK) {
+    //     ESP_LOGE(TAG, "Inicjalizacja BLE GATT Server nie powiodła się: %s", esp_err_to_name(ret));
+    //     return;
+    // }
+    // xTaskCreate(&send_alarm_task, "send_alarm_task", 4096, NULL, 5, NULL);
 
     
 
-    // ============================================Initialize MQTT Manager===============================================================
-    if (init_mqtt_manager(MQTT_BROKER_URI, MQTT_USER, MQTT_PASSWORD) != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to initialize MQTT Manager");
-        return;
-    }
+    // ============================================Initialize MQTT Manager=======================================================
+    
     //===================================================================================================================================
-
+    
     //===============================================Czujniki i Alarm =====================================================
 
     configure_io_pins();
@@ -427,13 +581,22 @@ void app_main(void)
     xTaskCreate(button_task, "button_task", 2048, NULL, 5, NULL);
     
     //===================================================================================================================================
-
-    char test_topic[100];
-    snprintf(test_topic, sizeof(test_topic), "test");
+    ESP_LOGI(TAG, "Starting BLE Alarm System...");
+    
+    ble_gatt_server_init();
+    // esp_err_t ret = ble_alarm_init();
+    // if (ret != ESP_OK) {
+    //     ESP_LOGE("MAIN", "BLE initialization failed!");
+    //     return;
+    // }
+    // char test_topic[100];
+    // snprintf(test_topic, sizeof(test_topic), "test");
     
     
     // // Inicjalizacja czujnika MQ-2
-    // mq2_init();
+    // mq2_init
+
+    //xTaskCreate(mqtt_receive_task, "mqtt_receive_task", 2048, NULL, 5, NULL);
 
     while (1) {
 
@@ -448,10 +611,10 @@ void app_main(void)
 
 
         
-        // char topic[MQTT_TOPIC_MAX_LEN] = {0};
-        // char message[MQTT_MSG_MAX_LEN] = {0};
+        char topic[MQTT_TOPIC_MAX_LEN] = {0};
+        char message[MQTT_MSG_MAX_LEN] = {0};
 
-        // TickType_t wait_time = pdMS_TO_TICKS(5000);  // Czekaj 5 sekund na wiadomość
+        TickType_t wait_time = pdMS_TO_TICKS(5000);  // Czekaj 5 sekund na wiadomość
 
         // esp_err_t ret = mqtt_manager_receive(topic, sizeof(topic), message, sizeof(message), wait_time);
 
@@ -465,10 +628,13 @@ void app_main(void)
         //     ESP_LOGE(TAG, "Błąd odbioru wiadomości MQTT");
         // }
         // button_state = gpio_get_level(BUTTON_PIN);
-        
+        //if(alarm_is_enabled()){
+        //ble_alarm_init();
+        //ESP_LOGI(TAG, "Sending BLE alarm notification...");
+        //ble_alarm_send();
+        vTaskDelay(5000 / portTICK_PERIOD_MS);
 
-        // previous_button_state = button_state;  // Aktualizacja poprzedniego stanu
-        vTaskDelay(pdMS_TO_TICKS(3000));  // Oczekiwanie 100 ms dla stabilności
+        
     
     }
          

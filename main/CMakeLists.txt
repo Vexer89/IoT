@@ -16,9 +16,8 @@ idf_component_register(
         "nvs"          # katalog z nvs_manager.h
         "wifi"         # katalog z wifi_manager.h
         "mqtt"         # katalog z mqtt_manager.h
-        "mq2"         # katalog z mq2.h
-        "ble"
-    REQUIRES
+        "mq2"          # katalog z mq2.h
+        "ble"          # katalog z ble_gatt_server.h
 
 )
 

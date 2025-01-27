@@ -8,7 +8,7 @@
 #include "freertos/semphr.h"
 
 // Define maximum lengths and queue sizes
-#define MQTT_TOPIC_MAX_LEN 128
+#define MQTT_TOPIC_MAX_LEN 256
 #define MQTT_MSG_MAX_LEN   256
 #define MQTT_QUEUE_LENGTH  10
 

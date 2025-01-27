@@ -548,6 +548,7 @@ C:/Users/krzys/OneDrive/Pulpit/GITHUB/IoT/build/esp-idf/esp_wifi/CMakeFiles/list
 C:/Users/krzys/OneDrive/Pulpit/GITHUB/IoT/build/esp-idf/esp_wifi/CMakeFiles/install.dir
 C:/Users/krzys/OneDrive/Pulpit/GITHUB/IoT/build/esp-idf/esp_wifi/CMakeFiles/install/local.dir
 C:/Users/krzys/OneDrive/Pulpit/GITHUB/IoT/build/esp-idf/esp_wifi/CMakeFiles/install/strip.dir
+C:/Users/krzys/OneDrive/Pulpit/GITHUB/IoT/build/esp-idf/bt/CMakeFiles/__idf_bt.dir
 C:/Users/krzys/OneDrive/Pulpit/GITHUB/IoT/build/esp-idf/bt/CMakeFiles/edit_cache.dir
 C:/Users/krzys/OneDrive/Pulpit/GITHUB/IoT/build/esp-idf/bt/CMakeFiles/rebuild_cache.dir
 C:/Users/krzys/OneDrive/Pulpit/GITHUB/IoT/build/esp-idf/bt/CMakeFiles/list_install_components.dir

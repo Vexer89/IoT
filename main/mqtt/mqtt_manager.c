@@ -5,6 +5,7 @@
 #include "esp_event.h"
 #include "nvs_flash.h"
 #include "esp_netif.h"
+#include "../nvs/nvs_manager.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -12,6 +13,8 @@
 #include <string.h>
 
 static const char *TAG = "mqtt_manager";
+
+nvs_mqtt_config_t mqtt_custom_cfg;
 
 // MQTT client handle
 static esp_mqtt_client_handle_t mqtt_client = NULL;
@@ -35,6 +38,15 @@ static void mqtt_receive_task(void *pvParameters);
 // Initialize the MQTT manager
 esp_err_t init_mqtt_manager(const char *broker_uri, const char *user, const char *password)
 {
+
+    // Pobranie konfiguracji z NVS
+    esp_err_t err = nvs_manager_get_mqtt_config(&mqtt_custom_cfg);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "MQTT Broker: %s", mqtt_custom_cfg.mqtt_broker);
+        ESP_LOGI(TAG, "MQTT Topic: %s", mqtt_custom_cfg.mqtt_topic);
+    } else {
+        ESP_LOGE(TAG, "Failed to load MQTT configuration from NVS");
+    }
    
     // Configure MQTT client
     esp_mqtt_client_config_t mqtt_cfg = {
@@ -43,6 +55,9 @@ esp_err_t init_mqtt_manager(const char *broker_uri, const char *user, const char
         .credentials.authentication.password = password,
         // Optionally set other parameters like port, client_id, etc.
     };
+
+    ESP_LOGW(TAG, "Broker: %s", mqtt_custom_cfg.mqtt_broker);
+    ESP_LOGW(TAG, "Topic: %s", mqtt_custom_cfg.mqtt_topic);
 
     // Initialize MQTT client
     mqtt_client = esp_mqtt_client_init(&mqtt_cfg);
@@ -107,18 +122,23 @@ esp_err_t mqtt_manager_send(const char *topic, const char *message)
         return ESP_FAIL;
     }
 
+    char full_topic[MQTT_TOPIC_MAX_LEN];
+    snprintf(full_topic, sizeof(full_topic), "%s%s", mqtt_custom_cfg.mqtt_topic, topic);
+
     // Create a buffer to hold topic and message
     char buffer[MQTT_TOPIC_MAX_LEN + MQTT_MSG_MAX_LEN];
     memset(buffer, 0, sizeof(buffer));
 
+
+
     // Ensure topic and message lengths
-    if (strlen(topic) >= MQTT_TOPIC_MAX_LEN || strlen(message) >= MQTT_MSG_MAX_LEN) {
+    if (strlen(full_topic) >= MQTT_TOPIC_MAX_LEN || strlen(message) >= MQTT_MSG_MAX_LEN) {
         ESP_LOGE(TAG, "Topic or message too long");
         return ESP_ERR_INVALID_ARG;
     }
 
     // Combine topic and message separated by a null character
-    strcpy(buffer, topic);
+    strcpy(buffer, full_topic);
     strcpy(buffer + MQTT_TOPIC_MAX_LEN, message); // Fixed offset for simplicity
 
     // Send to queue
@@ -193,8 +213,19 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         // Subscribe to topics if needed
         // Example: esp_mqtt_client_subscribe(client, "/topic/data", 0);
 
-        int msg_id = esp_mqtt_client_subscribe(client, "test", 0);
-        ESP_LOGI(TAG, "Subscribed to test, msg_id=%d", msg_id);
+        char topic_smoke[128];
+        char topic_temperature[128];
+        char topic_reset[128];
+
+        snprintf(topic_smoke, sizeof(topic_smoke), "%sconfig/threshold/smoke", mqtt_custom_cfg.mqtt_topic);
+        snprintf(topic_temperature, sizeof(topic_temperature), "%sconfig/threshold/temperature", mqtt_custom_cfg.mqtt_topic);
+        snprintf(topic_reset, sizeof(topic_reset), "%sconfig/reset", mqtt_custom_cfg.mqtt_topic);
+
+        esp_mqtt_client_subscribe(client, topic_smoke, 0);
+        esp_mqtt_client_subscribe(client, topic_temperature, 0);
+        esp_mqtt_client_subscribe(client, topic_reset, 0);
+
+        ESP_LOGI(TAG, "Subscribed to MQTT topics successfully");
 
         break;
     case MQTT_EVENT_DISCONNECTED:
